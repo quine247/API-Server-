@@ -1,5 +1,4 @@
 from flask import Flask, request, jsonify
-import time
 import pandas as pd
 import tensorflow as tf
 import numpy as np
@@ -11,16 +10,16 @@ app = Flask(__name__)
 # 2. Khai báo các thông số
 data_path = 'data/223_MLII.csv'
 model_path = 'model/New_Proposed_CNN_CNN_PastECG_FutureCls_1-mininput_5-minoutput.h5'
-minute_input_arr = 1 #fix 15 min lun đừng đổi chỗ này
+minute_input_arr = 1
 minute_input = 1
 minute_output = 5
 window_input_arr = 40 * minute_input_arr
 window_input = 40 * minute_input
 window_out = 40 * minute_output
-length_ecg = 187 
+length_ecg = 187
 batch_size = 16
 # Biến toàn cục để lưu trạng thái đọc dữ liệu
-global_chunk_position = 0
+global_chunk_position = 600
 
 # 3. Đọc file csv
 class CombinedDataset:
@@ -37,39 +36,26 @@ class CombinedDataset:
 
     def __len__(self):
         return len(self.X)
-    
+
 class CombinedDataLoader(tf.keras.utils.Sequence):
-    def __init__(self, dataset, batch_size, size):
+    def __init__(self, dataset, batch_size):
         self.dataset = dataset
         self.batch_size = batch_size
-        self.size = size
-        self.num_batches = size // batch_size
 
-    def __getitem__(self, i):
-        if i < self.num_batches:
-            start = i * self.batch_size
-            stop = (i + 1) * self.batch_size
+    def __getitem__(self, index):
+        start = index * self.batch_size
+        stop = (index + 1) * self.batch_size
 
-            data = [self.dataset[j] for j in range(start, stop)]
+        data = [self.dataset[j] for j in range(start, min(stop, len(self.dataset)))]
 
-            X1_batch = np.stack([sample[0] for sample in data], axis=0)
-            X2_batch = np.stack([sample[1] for sample in data], axis=0)
-            y_batch = np.array([sample[2] for sample in data])
+        X1_batch = np.stack([sample[0] for sample in data], axis=0)
+        X2_batch = np.stack([sample[1] for sample in data], axis=0)
+        y_batch = np.array([sample[2] for sample in data])
 
-            return [X1_batch, X2_batch], y_batch
-        else:
-            # Xử lý batch cuối cùng riêng biệt
-            remaining_samples = self.size - (self.num_batches * self.batch_size)
-            data = [self.dataset[j] for j in range(self.num_batches * self.batch_size, self.size)]
-
-            X1_batch = np.stack([sample[0] for sample in data], axis=0)
-            X2_batch = np.stack([sample[1] for sample in data], axis=0)
-            y_batch = np.array([sample[2] for sample in data])
-
-            return [X1_batch, X2_batch], y_batch
+        return [X1_batch, X2_batch], y_batch
 
     def __len__(self):
-        return self.num_batches + 1
+        return (len(self.dataset) + self.batch_size - 1) // self.batch_size
 
 # 4. Định nghĩa API
 @app.route('/')
@@ -97,8 +83,7 @@ def predict():
 
         # Xử lý chunk
         df = chunk
-        data = df.drop(columns=length_ecg)  # ECG
-        data = data.values
+        data = df.drop(columns=length_ecg).values  # ECG
         data1 = df.iloc[:, length_ecg]  # ARR
 
         X_window_arr = np.array(data1[:window_input_arr]).reshape(window_input_arr, 1)
@@ -111,7 +96,7 @@ def predict():
 
         # Tạo dataset và dataloader
         combined_test_dataset = CombinedDataset(X, X_arr, y)
-        combined_test_loader = CombinedDataLoader(combined_test_dataset, batch_size, len(combined_test_dataset))
+        combined_test_loader = CombinedDataLoader(combined_test_dataset, batch_size)
 
         # Tải mô hình và dự đoán kết quả
         model = load_model(model_path)
@@ -127,5 +112,4 @@ def predict():
         return jsonify({'error': error_message}), 500
 
 if __name__ == '__main__':
-    print('Hello world')
     app.run(debug=True)
